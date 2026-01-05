@@ -44,6 +44,45 @@ class P2PTradingMechanism:
     
     def __init__(self):
         self.trades = []    # list of executed trades
+
+    def balance_trading_offers(self, prosumers: List[Prosumer], imbalance_threshold: float, price_forecast: float, local_market_fee: float, max_trade_cap: float):
+        """
+        Balance the total amount of energy to be traded among prosumers
+        by finding prosumers with batteries that can offert their energy to who need it.
+        
+        Args:
+            prosumers: List of prosumers
+            imbalance_threshold: Threshold for balancing in kWh
+            price_forecast: Forecasted market price in €/kWh
+            local_market_fee: Fee for local market trading in €/kWh
+            max_trade_cap: Maximum trade quantity per prosumer per time step in kWh
+        """
+        total_demand = sum(p.desired_quantity for p in prosumers 
+                           if p.is_buyer and not p.is_banned)   # total demand from buyers
+        total_supply = sum(p.desired_quantity for p in prosumers 
+                           if p.is_seller and not p.is_banned)  # total supply from sellers
+        
+        imbalance = total_demand - total_supply  # calculate imbalance
+        
+        if abs(imbalance) <= imbalance_threshold:
+            return  # no significant imbalance, no adjustment needed
+        
+        # extract usable battery levels from prosumers (not banned and with battery level above min soc)
+        available_battery_levels = {p.id: p.battery_level - p.get_min_soc() for p in prosumers if not p.is_banned and p.battery_level > p.get_min_soc() and not p.is_buyer and not p.is_seller}
+
+        # sort battery levels in descending order
+        available_battery_levels = sorted(available_battery_levels.items(), key=lambda x: x[1], reverse=True)
+
+        if imbalance > 0:  # excess demand
+            # prosumers with higher battery levels can offer their energy
+            for prosumer_id, available_battery_level in available_battery_levels:
+                prosumer = next(p for p in prosumers if p.id == prosumer_id)
+                # the prosumer becomes a seller of up to half of its available battery level
+                offered_quantity = min(available_battery_level * 0.5, imbalance)
+                prosumer.becomes_seller(offered_quantity, price_forecast, local_market_fee, max_trade_cap)
+                imbalance -= offered_quantity
+                if imbalance <= imbalance_threshold:
+                    break  # stop if imbalance is resolved
     
     def execute_p2p_trading(self, prosumers: List[Prosumer], 
                            timestamp: int) -> List[Trade]:
@@ -61,9 +100,9 @@ class P2PTradingMechanism:
         
         # Get buyers and sellers (not banned)
         buyers = [p for p in prosumers if p.is_buyer and not p.is_banned 
-                  and p.desired_quantity > 0.01]    # filter active buyers who are not banned and have desired quantity > 0.01
+                  and p.desired_quantity > 0]    # filter active buyers who are not banned and have desired quantity > 0
         sellers = [p for p in prosumers if p.is_seller and not p.is_banned 
-                   and p.desired_quantity > 0.01]  # filter active sellers who are not banned and have desired quantity > 0.01
+                   and p.desired_quantity > 0]  # filter active sellers who are not banned and have desired quantity > 0
         
         if not buyers or not sellers:   # if no buyers or sellers, no trades possible
             return trades
@@ -74,43 +113,41 @@ class P2PTradingMechanism:
         # Sort sellers by asking price (lowest first)
         sellers.sort(key=lambda x: x.ask_price)    # sort sellers by ask price ascending
         
-        # Match buyers and sellers
-        buyer_idx = 0   # index for buyers
-        seller_idx = 0  # index for sellers
-        
-        while buyer_idx < len(buyers) and seller_idx < len(sellers):    # iterate while there are buyers and sellers to match
-            buyer = buyers[buyer_idx]   # current buyer
-            seller = sellers[seller_idx]    # current seller
-            
-            # Check if trade is possible (buyer willing to pay >= seller asking)
-            if buyer.bid_price >= seller.ask_price: # check if the buyer accepts to pay the seller's ask price
-                # Calculate trade quantity - if the buyer wants more than the seller has, trade only what the seller has. If the buyer wants less, trade only what the buyer wants
-                trade_quantity = min(buyer.desired_quantity, seller.desired_quantity)   # determine trade quantity based on seller and buyer desired quantities
+        # Match buyers and sellers - improved algorithm to maximize P2P trades
+        # Try to match each buyer with compatible sellers
+        for buyer in buyers:
+            if buyer.desired_quantity < 0.01:  # Skip if buyer already satisfied
+                continue
                 
-                if trade_quantity > 0.01:  # Minimum trade size
-                    # Trade price is average of bid and ask
-                    trade_price = (buyer.bid_price + seller.ask_price) / 2
+            # Find all sellers that this buyer can trade with (bid >= ask)
+            for seller in sellers:
+                if seller.desired_quantity < 0.01:  # Skip if seller already sold all
+                    continue
                     
-                    # Execute trade
-                    buyer.accept_trade(trade_quantity, trade_price, 
-                                      is_buyer_role=True, is_p2p=True)
-                    seller.accept_trade(trade_quantity, trade_price, 
-                                       is_buyer_role=False, is_p2p=True)
+                # Check if trade is possible (buyer willing to pay >= seller asking)
+                if buyer.bid_price >= seller.ask_price:
+                    # Calculate trade quantity
+                    trade_quantity = min(buyer.desired_quantity, seller.desired_quantity)
                     
-                    # Record trade
-                    trade = Trade(buyer.id, seller.id, trade_quantity, 
-                                 trade_price, 'p2p', timestamp) # create trade record
-                    trades.append(trade)    # add trade to list
-            
-            # Move to next buyer or seller
-            if buyer.desired_quantity < 0.01:   # if buyer has no more desired quantity
-                buyer_idx += 1  # skip to next buyer
-            if seller.desired_quantity < 0.01:  # if seller has no more desired quantity
-                seller_idx += 1 # skip to next seller
-            
-            # If there is no seller willing to sell at buyer's bid price, let the buyer retry with a slightly higher bid or skip after 3 retries
-            if buyer.bid_price < seller.ask_price:
-                buyer_idx += 1
+                    if trade_quantity > 0.01:  # Minimum trade size
+                        # Trade price is average of bid and ask
+                        trade_price = (buyer.bid_price + seller.ask_price) / 2
+                        
+                        # Execute trade
+                        buyer.accept_trade(trade_quantity, trade_price, 
+                                          is_buyer_role=True, is_p2p=True)
+                        seller.accept_trade(trade_quantity, trade_price, 
+                                           is_buyer_role=False, is_p2p=True)
+                        
+                        # Record trade
+                        trade = Trade(buyer.id, seller.id, trade_quantity, 
+                                     trade_price, 'p2p', timestamp)
+                        trades.append(trade)
+                        
+                        # Check if buyer is satisfied
+                        if buyer.desired_quantity < 0.01:
+                            buyer.desired_quantity = 0.0
+                            break  # Move to next buyer
         
         self.trades.extend(trades)  # add executed trades to overall trade list
         return trades
@@ -185,11 +222,3 @@ class LocalMarketMechanism:
 
         self.trades.extend(trades)  # add executed trades to overall trade list
         return trades
-
-    def calculate_aggregator_profit(self) -> float:
-        """Calculate total profit for aggregator from fees"""
-        total_profit = 0.0
-        for trade in self.trades:
-            if trade.trade_type == 'local_market':
-                total_profit += trade.quantity * self.transaction_fee * 2
-        return total_profit

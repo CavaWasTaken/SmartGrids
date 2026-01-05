@@ -3,6 +3,7 @@ Prosumer class representing an individual energy consumer/producer
 """
 import random
 from typing import Dict, List, Tuple, Optional
+import config
 
 
 class Prosumer:
@@ -22,20 +23,22 @@ class Prosumer:
         self.id = prosumer_id   # unique prosumer ID
         self.pv_capacity = pv_capacity   # PV panel capacity in kW
         self.base_consumption = base_consumption   # base consumption level in kWh per time step
-        self.has_battery = battery_capacity > 0
+        self.has_battery = battery_capacity > 0.0  # whether prosumer has a battery
         self.battery_capacity = battery_capacity    # kWh - battery capacity (if any)
         
         # Energy state
         self.pv_generation = 0.0  # kWh - current PV generation
         self.consumption = 0.0  # kWh - current energy consumption
         self.imbalance = 0.0  # kWh (positive = surplus, negative = deficit) - current energy imbalance
-        
+        self.battery_level = battery_capacity / 2 if self.has_battery else 0.0  # kWh - current battery level (initialized to half capacity if battery exists)
+
         # Trading state
         self.is_buyer = False   # whether prosumer is a buyer in current timestep
         self.is_seller = False  # whether prosumer is a seller in current timestep
         self.desired_quantity = 0.0  # kWh - desired trading quantity
         self.bid_price = 0.0  # €/kWh - bid price if buying
         self.ask_price = 0.0  # €/kWh - ask price if selling
+        self.selling_from_battery = False  # whether selling energy is from battery
         
         # Financial tracking
         self.balance = 0.0  # € - current financial balance
@@ -48,14 +51,18 @@ class Prosumer:
         self.is_banned = False  # whether prosumer is banned from trading
         self.ban_duration = 0   # duration of ban in timesteps
         self.reason_for_ban = ""  # reason for current ban
-        self.total_profit = 0.0  # total profit accumulated
+        self.total_profit = 0.0  # € - total profit accumulated
         self.penalties = 0.0  # € - total penalties incurred
         self.bonus = 0.0  # € - total bonuses received
+        
+        # Battery energy flow tracking (reset each timestep)
+        self.battery_charged_kwh = 0.0  # Energy charged into battery this timestep
+        self.battery_discharged_kwh = 0.0  # Energy discharged from battery this timestep
 
 
     def update_energy_state(self, pv_generation: float, consumption: float):
         """
-        Update prosumer's energy generation and consumption
+        Update prosumer's energy generation and consumption with battery management
         
         Args:
             pv_generation: PV generation in kWh
@@ -64,14 +71,55 @@ class Prosumer:
         self.pv_generation = pv_generation  # overwrite current PV generation of the prosumer
         self.consumption = consumption  # overwrite current consumption of the prosumer
         
-        # Step 1: Self-balancing
-        self.imbalance = pv_generation - consumption    # evaluate imbalance (positive = surplus, negative = deficit)
+        # Step 1: Calculate initial imbalance (before battery)
+        initial_imbalance = pv_generation - consumption    # evaluate imbalance (positive = surplus, negative = deficit)
         
-        # Track renewable usage
-        # if pv_generation > consumption: # all consumption is covered by renewable and excess is sold, consider the consumption only
-        # if consumption >= pv_generation: # only part of consumption is covered by renewable, consider the pv generation only
+        # Track renewable usage (direct PV to consumption)
         self.renewable_usage += min(pv_generation, consumption) # get the amount of renewable energy used by the prosumer
         
+        # Reset battery flow tracking for this timestep
+        self.battery_charged_kwh = 0.0
+        self.battery_discharged_kwh = 0.0
+        
+        # Step 2: Battery management to minimize grid dependency
+        if self.has_battery:
+            if initial_imbalance > 0:  # SURPLUS - try to store in battery
+                # Calculate how much we can store (respecting max SoC and efficiency)
+                max_level = self.battery_capacity * config.BATTERY_MAX_SOC
+                max_storable = max(0, max_level - self.battery_level)
+                energy_to_store = min(initial_imbalance, max_storable)
+                
+                # Store energy in battery (with charging efficiency loss)
+                actual_stored = energy_to_store * config.BATTERY_EFFICIENCY
+                self.battery_level += actual_stored
+                self.imbalance = initial_imbalance - energy_to_store
+                
+                # Track energy charged into battery (input energy before efficiency loss)
+                self.battery_charged_kwh = energy_to_store
+                
+            elif initial_imbalance < 0:  # DEFICIT - try to discharge from battery
+                # Calculate how much we can discharge (respecting min SoC and efficiency)
+                min_level = self.battery_capacity * config.BATTERY_MIN_SOC
+                available_energy = max(0, self.battery_level - min_level)
+                energy_needed = abs(initial_imbalance)
+                
+                # Discharge energy from battery (with discharging efficiency loss)
+                energy_to_discharge = min(energy_needed / config.BATTERY_EFFICIENCY, available_energy)
+                actual_output = energy_to_discharge * config.BATTERY_EFFICIENCY
+                
+                self.battery_level -= energy_to_discharge
+                self.imbalance = initial_imbalance + actual_output
+                
+                # Track energy discharged from battery (output energy after efficiency loss)
+                self.battery_discharged_kwh = actual_output
+                
+                # Track renewable usage (discharged energy was renewable and is now consumed)
+                self.renewable_usage += actual_output
+            else:
+                self.imbalance = initial_imbalance
+        else:
+            self.imbalance = initial_imbalance
+
     def prepare_trading_offer(self, price_forecast: float, local_market_fee: float, max_trade_cap: float):
         """
         Prepare trading offer based on imbalance and price forecast
@@ -86,46 +134,84 @@ class Prosumer:
             self.is_seller = False  # reset seller status
             self.desired_quantity = 0.0 # reset desired quantity
             return
-        
+                
         if self.imbalance > 0.01:  # if there is Surplus - prosumer becomes seller
             self.is_seller = True   # set seller status
             self.is_buyer = False   # reset buyer status
             self.desired_quantity = min(self.imbalance, max_trade_cap)  # set desired quantity to surplus, capped by max trade cap
 
-            grid_buy_price = price_forecast + (self.desired_quantity * local_market_fee)  # grid buy price including fee
-            grid_sell_price = price_forecast - (self.desired_quantity * local_market_fee)   # grid sell price including fee
+            grid_buy_price = price_forecast + local_market_fee  # grid buy price including fee
+            grid_sell_price = price_forecast - local_market_fee   # grid sell price including fee
 
             spread = grid_buy_price - grid_sell_price  # evaluate spread between grid buy and sell prices
             urgency = self.desired_quantity / max_trade_cap  # evaluate urgency based on desired quantity
 
             noise = random.uniform(0.98, 1.05)   # strategic factor to adjust ask price
             
-            calculated_ask = (grid_buy_price - (urgency * spread)) * noise  # set ask price lower than grid buy price based on urgency and strategic factor
+            calculated_ask = (grid_sell_price + (urgency * spread)) * noise  # set ask price starting from grid_sell_price, increasing with urgency
 
-            self.ask_price = min(calculated_ask, grid_buy_price * 0.99)  # ensure ask price is below grid buy price
-            self.ask_price = max(self.ask_price, grid_sell_price * 1.01)  # ensure ask price is above grid sell price
+            self.ask_price = max(calculated_ask, grid_sell_price * 1.01)  # ensure ask price is above grid sell price
+            self.ask_price = min(self.ask_price, grid_buy_price * 0.95)  # ensure ask price leaves room for P2P matching
 
         elif self.imbalance < -0.01:  # if there is Deficit - prosumer becomes buyer
             self.is_buyer = True   # set buyer status
             self.is_seller = False  # reset seller status
             self.desired_quantity = min(-self.imbalance, max_trade_cap)  # set desired quantity to deficit, capped by max trade cap
             
-            grid_buy_price = price_forecast + (self.desired_quantity * local_market_fee)  # grid buy price including fee
-            grid_sell_price = price_forecast - (self.desired_quantity * local_market_fee)   # grid sell price including fee
+            grid_buy_price = price_forecast + local_market_fee  # grid buy price including fee
+            grid_sell_price = price_forecast - local_market_fee   # grid sell price including fee
 
             spread = grid_buy_price - grid_sell_price  # evaluate spread between grid buy and sell prices
             urgency = self.desired_quantity / max_trade_cap  # evaluate urgency based on desired quantity
             
             noise = random.uniform(0.95, 1.02)   # strategic factor to adjust bid price
 
-            calculated_bid = (grid_sell_price + (urgency * spread)) * noise  # set bid price higher than grid sell price based on urgency and strategic factor
-            self.bid_price = max(calculated_bid, grid_sell_price * 1.01)  # ensure bid price is above grid sell price
-            self.bid_price = min(self.bid_price, grid_buy_price * 0.99)  # ensure bid price is below grid buy price
+            calculated_bid = (grid_buy_price - (urgency * spread)) * noise  # set bid price starting from grid_buy_price, decreasing with urgency
+            self.bid_price = min(calculated_bid, grid_buy_price * 0.99)  # ensure bid price is below grid buy price
+            self.bid_price = max(self.bid_price, grid_sell_price * 1.05)  # ensure bid price leaves room for P2P matching
 
         else:  # if balanced, no trading needed
             self.is_buyer = False   # reset buyer status
             self.is_seller = False  # reset seller status
             self.desired_quantity = 0.0 # reset desired quantity
+
+    def becomes_seller(self, offered_quantity: float, price_forecast: float, local_market_fee: float, max_trade_cap: float):
+        """
+        Make prosumer a seller of the offered quantity
+        
+        Args:
+            offered_quantity: Quantity offered to sell in kWh
+        """
+
+        self.selling_from_battery = True  # indicate that the prosumer is selling energy from battery
+        self.desired_quantity += offered_quantity  # set desired quantity to offered quantity
+        self.is_seller = True   # set seller status
+        self.is_buyer = False   # reset buyer status
+        self.desired_quantity = min(self.desired_quantity, max_trade_cap)  # set desired quantity to surplus, capped by max trade cap
+
+        grid_buy_price = price_forecast + local_market_fee  # grid buy price including fee
+        grid_sell_price = price_forecast - local_market_fee   # grid sell price including fee
+
+        spread = grid_buy_price - grid_sell_price  # evaluate spread between grid buy and sell prices
+        urgency = self.desired_quantity / max_trade_cap  # evaluate urgency based on desired quantity
+
+        noise = random.uniform(0.98, 1.05)   # strategic factor to adjust ask price
+
+        calculated_ask = (grid_sell_price + (urgency * spread)) * noise  # set ask price starting from grid_sell_price, increasing with urgency
+        self.ask_price = max(calculated_ask, grid_sell_price * 1.01)  # ensure ask price is above grid sell price
+        self.ask_price = min(self.ask_price, grid_buy_price * 0.95)  # ensure ask price leaves room for P2P matching
+
+    
+    def get_min_soc(self) -> float:
+        """
+        Get minimum state of charge (SoC) for the battery
+        
+        Returns:
+            Minimum SoC in kWh
+        """
+        if not self.has_battery:
+            return 0.0
+        return self.battery_capacity * config.BATTERY_MIN_SOC
     
     def accept_trade(self, quantity: float, price: float, is_buyer_role: bool, 
                      is_p2p: bool = True):
@@ -144,7 +230,11 @@ class Prosumer:
             self.balance -= price    # decrease balance by cost of purchase
         else:   # if the prosumer trading is in the seller role
             # Selling energy
-            self.imbalance -= quantity  # decrease imbalance by quantity sold
+            if not self.selling_from_battery:
+                self.imbalance -= quantity  # decrease imbalance by quantity sold
+            else:
+                self.battery_level -= quantity  # decrease battery level by quantity sold
+                self.battery_discharged_kwh += quantity  # track energy discharged for sale
             self.balance += price    # increase balance by revenue from sale
         
         self.desired_quantity = max(0, self.desired_quantity - quantity)    # update desired quantity (stored in absolute value) after trade by reducing it by traded quantity. Ensure no negative values.
@@ -169,11 +259,24 @@ class Prosumer:
         Ban prosumer from trading
         
         Args:
-            duration: Number of time steps to ban
+            duration: Number of timesteps to ban
+            reason: Reason for the ban
         """
-        self.is_banned = True   # set ban status to True
-        self.ban_duration = duration    # set ban duration
-        self.reason_for_ban = reason  # set reason for ban
+        self.is_banned = True
+        self.ban_duration = duration
+        self.reason_for_ban = reason
+    
+    def update_ban_status(self):
+        """
+        Update ban status - decrement duration and lift ban if expired
+        Called at the start of each timestep
+        """
+        if self.is_banned and self.ban_duration > 0:
+            self.ban_duration -= 1
+            if self.ban_duration <= 0:
+                self.is_banned = False
+                self.ban_duration = 0
+                self.reason_for_ban = ""
     
     def reset_trading_state(self):
         """
@@ -181,10 +284,34 @@ class Prosumer:
         """
         self.is_buyer = False   # reset buyer status
         self.is_seller = False  # reset seller status
+        self.selling_from_battery = False  # reset selling from battery status
         self.desired_quantity = 0.0  # reset desired quantity
         self.bid_price = 0.0  # reset bid price
         self.ask_price = 0.0  # reset ask price
     
+    def get_battery_info(self) -> dict:
+        """
+        Get battery information for logging
+        
+        Returns:
+            Dictionary with battery stats
+        """
+        if not self.has_battery:
+            return {
+                'has_battery': False,
+                'capacity': 0,
+                'level': 0,
+                'soc': 0
+            }
+        
+        return {
+            'has_battery': True,
+            'capacity': round(self.battery_capacity, 2),
+            'level': round(self.battery_level, 2),
+            'soc': round(self.battery_level / self.battery_capacity * 100, 1) if self.battery_capacity > 0 else 0
+        }
+    
     def __repr__(self):
-        return (f"Prosumer(id={self.id}, PV={self.pv_capacity:.1f}kW, "
+        battery_info = f", Battery: {self.battery_level:.1f}/{self.battery_capacity:.1f}kWh" if self.has_battery else ""
+        return (f"Prosumer(id={self.id}, PV={self.pv_capacity:.1f}kW{battery_info}, "
                 f"imbalance={self.imbalance:.2f}kWh, balance={self.balance:.2f}€)")

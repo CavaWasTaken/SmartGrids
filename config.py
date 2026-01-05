@@ -3,25 +3,26 @@ Configuration parameters for the prosumer community simulator
 """
 
 # Simulation parameters
-NUM_PROSUMERS = 10
+NUM_PROSUMERS = 100
 TIME_STEPS = 24  # 24 hours
 TIME_STEP_DURATION = 1  # hours
 
 # Prosumer parameters
-MIN_PV_CAPACITY = 3  # kW
-MAX_PV_CAPACITY = 10  # kW
-MIN_BASE_CONSUMPTION = 0.3  # kWh per hour
-MAX_BASE_CONSUMPTION = 3.0  # kWh per hour
-BATTERY_CAPACITY = [0, 5, 10, 15, 20]  # kWh possible battery capacities
+PV_CAPACITY = [ 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5, 7.0 ]  # kW
+BASE_CONSUMPTION = [ 0.35, 0.45, 0.55, 0.65, 0.75, 0.90, 1.05, 1.20, 1.35, 1.50 ]  # kWh per time step
+HAS_BATTERY = 0.8  # 80% of prosumers have a battery
+BATTERY_CAPACITY = [ 5.0, 7.0, 8.0, 10.0, 12.0, 13.0, 15.0, 17.0, 18.0, 20.0 ]  # kWh possible battery capacities
+BATTERY_EFFICIENCY = 0.95  # Round-trip efficiency (5% loss on charge/discharge cycle)
+BATTERY_MIN_SOC = 0.1  # Minimum state of charge (10% reserve)
+BATTERY_MAX_SOC = 0.95  # Maximum state of charge (95% to protect battery)
 
 # Grid parameters
 BASE_PRICE = 0.15  # €/kWh
 MAX_TRADE_CAP = 3.0  # kWh maximum trade quantity per prosumer per time step
 
 # Trading parameters
-MAX_PRICE = 0.30  # €/kWh
-MIN_PRICE = 0.05  # €/kWh
-LOCAL_MARKET_FEE = 0.02  # €/kWh fee for local market trading
+LOCAL_MARKET_FEE = 0.03  # €/kWh fee for local market trading
+IMBALANCE_THRESHOLD = 0.05  # kWh threshold for balancing the amount of energy to trade
 
 # Blockchain parameters
 NUM_MINERS = 15

@@ -2,6 +2,8 @@
 Main simulator orchestrating the prosumer community energy trading
 """
 import random
+import csv
+import os
 from typing import List
 from prosumer import Prosumer
 from trading import P2PTradingMechanism, LocalMarketMechanism, Trade
@@ -19,38 +21,173 @@ class CommunitySimulator:
     
     def __init__(self):
         """Initialize the simulator with all components"""
-        self.prosumers = [] # list of prosumers
-        self.p2p_mechanism = P2PTradingMechanism()  # initialize P2P trading mechanism which meets offer to demand
+        self.prosumers = []
+        self.p2p_mechanism = P2PTradingMechanism()
         self.local_market = LocalMarketMechanism(
-            aggregator_id=-1, # ID of the aggregator which manages the market
-            transaction_fee=config.LOCAL_MARKET_FEE # euro/kWh fee charged by aggregator to each trade
-        )   # initialize local market mechanism for balancing remaining imbalances
+            aggregator_id=-1,
+            transaction_fee=config.LOCAL_MARKET_FEE
+        )
         self.blockchain = Blockchain(
-            difficulty=config.DIFFICULTY_TARGET,    # number of leading zeros required in hash
-            num_miners=config.NUM_MINERS,   # number of miners in the blockchain network
-            block_reward=config.BLOCK_REWARD,  # reward given to miner for mining a block
-            max_transactions_per_block=config.MAX_TRANSACTIONS_PER_BLOCK  # max transactions per block
-        )   # initialize blockchain for recording trades
-        self.regulator = Regulator(objective=config.REGULATOR_OBJECTIVE)    # initialize community regulator with specified objective, it enforces rules and incentivizes desired behavior
+            difficulty=config.DIFFICULTY_TARGET,
+            num_miners=config.NUM_MINERS,
+            block_reward=config.BLOCK_REWARD,
+            max_transactions_per_block=config.MAX_TRANSACTIONS_PER_BLOCK
+        )
+        self.regulator = Regulator(objective=config.REGULATOR_OBJECTIVE)
         
-        self.current_timestep = 0   # current timestep of the simulation
-        self.simulation_log = []    # log to store simulation data for analysis
+        self.current_timestep = 0
+        self.simulation_log = []
         
+        # Create results directory
+        os.makedirs("results", exist_ok=True)
+        
+        # Initialize CSV logging
+        self._initialize_csv_logs()
+        
+    def _initialize_csv_logs(self):
+        """Initialize CSV files for efficient time-series logging"""
+        # Prosumer energy states CSV
+        with open("results/prosumer_energy.csv", "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                "Timestep", "Hour", "Prosumer_ID", "PV_Generation_kWh", "Consumption_kWh",
+                "Battery_Level_kWh", "Battery_Capacity_kWh", "Battery_SOC_%",
+                "Battery_Charged_kWh", "Battery_Discharged_kWh",
+                "Imbalance_Before_P2P_kWh", "Imbalance_After_P2P_kWh", 
+                "Imbalance_After_Market_kWh", "Balance_Euro", "Renewable_Usage_kWh"
+            ])
+        
+        # Prosumer trading CSV
+        with open("results/prosumer_trading.csv", "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                "Timestep", "Hour", "Prosumer_ID", "Role", "Is_Banned",
+                "Desired_Quantity_kWh", "Bid_Price_Euro_kWh", "Ask_Price_Euro_kWh",
+                "P2P_Trades_Count", "Market_Trades_Count"
+            ])
+        
+        # All trades CSV
+        with open("results/all_trades.csv", "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                "Timestep", "Hour", "Trade_Type", "Buyer_ID", "Seller_ID",
+                "Quantity_kWh", "Price_Euro_kWh"
+            ])
+        
+        # Regulator actions CSV
+        with open("results/regulator_actions.csv", "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                "Timestep", "Hour", "Prosumer_ID", "Bonus_Euro", "Penalties_Euro",
+                "Is_Banned", "Ban_Duration", "Ban_Reason"
+            ])
+        
+        # Community summary CSV
+        with open("results/community_summary.csv", "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                "Timestep", "Hour", "Price_Forecast_Euro_kWh",
+                "Total_PV_Generation_kWh", "Total_Consumption_kWh",
+                "Total_Surplus_kWh", "Total_Deficit_kWh",
+                "P2P_Trades_Count", "Market_Trades_Count",
+                "Active_Buyers", "Active_Sellers", "Banned_Prosumers"
+            ])
+    
     def initialize_prosumers(self):
         """Create prosumers with random characteristics"""
         print(f"Initializing {config.NUM_PROSUMERS} prosumers...")
         
-        # for each prosumer, evaluate a random PV capacity between min and max, and a random base consumption between min and max
         for i in range(config.NUM_PROSUMERS):
-            pv_capacity = random.uniform(config.MIN_PV_CAPACITY, config.MAX_PV_CAPACITY)
-            base_consumption = random.uniform(config.MIN_BASE_CONSUMPTION, 
-                                             config.MAX_BASE_CONSUMPTION)
-            battery_capacity = random.choices(config.BATTERY_CAPACITY, weights=[0.4, 0.15, 0.25, 0.15, 0.05], k=1)[0]  # choose a random battery capacity from the list with weights
+            home_index = random.randint(0, len(config.PV_CAPACITY) - 1)
+            pv_capacity = config.PV_CAPACITY[home_index]  # choose a random PV capacity from the list
+            base_consumption = config.BASE_CONSUMPTION[home_index]  # choose a random base consumption from the list
+            has_battery = random.random() < config.HAS_BATTERY  # determine if prosumer has a battery
+            battery_capacity = config.BATTERY_CAPACITY[home_index] if has_battery else 0.0  # choose a random battery capacity from the list
             
             prosumer = Prosumer(i, pv_capacity, base_consumption, battery_capacity)   # initialize prosumer with ID, PV capacity, base consumption, and battery capacity
             self.prosumers.append(prosumer) # add prosumer to the community list
         
         print(f"✓ Created {len(self.prosumers)} prosumers")
+    
+    def _log_timestep_to_csv(self, timestep: int, hour: int, price_forecast: float,
+                              p2p_trades: List[Trade], market_trades: List[Trade],
+                              imbalances_before_p2p: dict, imbalances_after_p2p: dict,
+                              original_desired_quantities: dict):
+        """
+        Log timestep data to CSV files for efficient storage and analysis
+        
+        Args:
+            timestep: Current timestep
+            hour: Hour of day
+            price_forecast: Energy price forecast
+            p2p_trades: List of P2P trades executed
+            market_trades: List of market trades executed
+            imbalances_before_p2p: Dict of prosumer imbalances before P2P
+            imbalances_after_p2p: Dict of prosumer imbalances after P2P
+            original_desired_quantities: Dict of original desired quantities before trading
+        """
+        # Log prosumer energy states
+        with open("results/prosumer_energy.csv", "a", newline="") as f:
+            writer = csv.writer(f)
+            for p in self.prosumers:
+                battery_info = p.get_battery_info()
+                writer.writerow([
+                    timestep, hour, p.id, round(p.pv_generation, 4), round(p.consumption, 4),
+                    battery_info['level'], battery_info['capacity'], battery_info['soc'],
+                    round(p.battery_charged_kwh, 4), round(p.battery_discharged_kwh, 4),
+                    round(imbalances_before_p2p.get(p.id, 0), 4),
+                    round(imbalances_after_p2p.get(p.id, 0), 4),
+                    round(p.imbalance, 4), round(p.balance, 4), round(p.renewable_usage, 4)
+                ])
+        
+        # Log prosumer trading status
+        with open("results/prosumer_trading.csv", "a", newline="") as f:
+            writer = csv.writer(f)
+            for p in self.prosumers:
+                role = "Banned" if p.is_banned else ("Buyer" if p.is_buyer else ("Seller" if p.is_seller else "Neutral"))
+                writer.writerow([
+                    timestep, hour, p.id, role, p.is_banned,
+                    round(original_desired_quantities.get(p.id, 0), 4) if not p.is_banned else 0,
+                    round(p.bid_price, 4) if p.is_buyer else None,
+                    round(p.ask_price, 4) if p.is_seller else None,
+                    p.p2p_trades, p.market_trades
+                ])
+        
+        # Log all trades
+        with open("results/all_trades.csv", "a", newline="") as f:
+            writer = csv.writer(f)
+            for trade in p2p_trades + market_trades:
+                writer.writerow([
+                    timestep, hour, trade.trade_type, trade.buyer_id, trade.seller_id,
+                    round(trade.quantity, 4), round(trade.price, 4)])
+        
+        # Log regulator actions
+        with open("results/regulator_actions.csv", "a", newline="") as f:
+            writer = csv.writer(f)
+            for p in self.prosumers:
+                writer.writerow([
+                    timestep, hour, p.id, round(p.bonus, 4), round(p.penalties, 4),
+                    p.is_banned, p.ban_duration, p.reason_for_ban
+                ])
+        
+        # Log community summary
+        with open("results/community_summary.csv", "a", newline="") as f:
+            writer = csv.writer(f)
+            total_pv = sum(p.pv_generation for p in self.prosumers)
+            total_consumption = sum(p.consumption for p in self.prosumers)
+            total_surplus = sum(p for p in imbalances_before_p2p.values() if p > 0)
+            total_deficit = sum(abs(p) for p in imbalances_before_p2p.values() if p < 0)
+            active_buyers = sum(1 for p in self.prosumers if p.is_buyer and not p.is_banned)
+            active_sellers = sum(1 for p in self.prosumers if p.is_seller and not p.is_banned)
+            banned = sum(1 for p in self.prosumers if p.is_banned)
+            
+            writer.writerow([
+                timestep, hour, round(price_forecast, 4),
+                round(total_pv, 4), round(total_consumption, 4),
+                round(total_surplus, 4), round(total_deficit, 4),
+                len(p2p_trades), len(market_trades),
+                active_buyers, active_sellers, banned
+            ])
     
     def simulate_timestep(self, timestep: int):
         """
@@ -74,276 +211,99 @@ class CommunitySimulator:
             prosumer.update_energy_state(pv_gen, consumption)   # update prosumer's energy state with generated PV and consumption
         
         # 2. Get price forecast
-        price_forecast = forecast_price(hour, config.BASE_PRICE)   # get the energy price forecast for the hour
-
-########################
-
-        # Initialize timestep data structure (we'll write once at the end)
-        # read existing data or start with empty dict
-        try:
-            with open("results/timestep_data.json", "r") as f:
-                timestep_data = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            timestep_data = {}
-
-        # initialize timestep data
-        timestep_key = f'Timestep_{timestep}'
-        timestep_data[timestep_key] = {
-            'Price_Forecast_euro/kWh': round(price_forecast, 4),
-            'Prosumers': {}
-        }
-        for p in self.prosumers:
-            timestep_data[timestep_key]['Prosumers'][f'Prosumer_{p.id}'] = {
-                'PV_Generation_kWh': round(p.pv_generation, 4),
-                'Consumption_kWh': round(p.consumption, 4),
-                'Balance_euro': round(p.balance, 4),
-                'Bonus': round(p.bonus, 4),
-                'Penalties': round(p.penalties, 4),                    
-                'Imbalances': {},
-                'Trader_Status': {},
-                'P2P_Trades': [],
-                'Market_Trades': [],
-                'Regulator': {}
-            }   
-
-########################
-        if config.VERBOSE:  # verbose output for price and total surplus/deficit
-            # count total surplus and deficit in the community (for each prosumer)
+        price_forecast = forecast_price(hour, config.BASE_PRICE)
+        
+        # Store imbalances before P2P for logging
+        imbalances_before_p2p = {p.id: p.imbalance for p in self.prosumers}
+        
+        if config.VERBOSE:
             total_surplus = sum(p.imbalance for p in self.prosumers if p.imbalance > 0)
             total_deficit = sum(abs(p.imbalance) for p in self.prosumers if p.imbalance < 0)
-            print(f"Price Forecast: euro{price_forecast:.3f}/kWh")
+            print(f"Price Forecast: €{price_forecast:.3f}/kWh")
             print(f"Total Surplus: {total_surplus:.2f} kWh | Total Deficit: {total_deficit:.2f} kWh")
-
-########################
-
-        # Track imbalances - BEFORE P2P (add to existing timestep_data)
-        for p in self.prosumers:
-            timestep_data[timestep_key]['Prosumers'][f'Prosumer_{p.id}']['Imbalances'] = {
-                'Before_P2P': round(p.imbalance, 4)
-            }
 
         # 3. Prosumers prepare trading offers
         for prosumer in self.prosumers:
-            prosumer.prepare_trading_offer(price_forecast, config.LOCAL_MARKET_FEE, config.MAX_TRADE_CAP)  # prosumer prepares their trading offer (buy or sell) based on imbalance and price forecast
+            prosumer.prepare_trading_offer(price_forecast, config.LOCAL_MARKET_FEE, config.MAX_TRADE_CAP)
         
-        buyers_count = sum(1 for p in self.prosumers if p.is_buyer and not p.is_banned) # count active buyers who are not banned
-        sellers_count = sum(1 for p in self.prosumers if p.is_seller and not p.is_banned)   # count active sellers who are not banned
+        # 4. Check the total amount of asked and bid energy - if there is big difference check if some prosumer can help with their battery
+        total_asked_energy = sum(p.desired_quantity for p in self.prosumers if p.is_buyer and not p.is_banned)
+        total_bid_energy = sum(p.desired_quantity for p in self.prosumers if p.is_seller and not p.is_banned)
+
+        self.p2p_mechanism.balance_trading_offers(self.prosumers, config.IMBALANCE_THRESHOLD, price_forecast, config.LOCAL_MARKET_FEE, config.MAX_TRADE_CAP)
+
+        buyers_count = sum(1 for p in self.prosumers if p.is_buyer and not p.is_banned)
+        sellers_count = sum(1 for p in self.prosumers if p.is_seller and not p.is_banned)
         
-        if config.VERBOSE:  # verbose output for active buyers and sellers
+        if config.VERBOSE:
             print(f"Active Buyers: {buyers_count} | Active Sellers: {sellers_count}")
-
-########################
-
-        # Log active traders data (add to existing timestep_data)
-        for p in self.prosumers:
-            if (p.is_buyer or p.is_seller) and not p.is_banned:
-                timestep_data[timestep_key]['Prosumers'][f'Prosumer_{p.id}']['Trader_Status'] = {
-                    'Role': 'Buyer' if p.is_buyer else 'Seller',
-                    'Desired_Quantity_kWh': round(p.desired_quantity, 4),
-                    'Bid_Price_euro/kWh': round(p.bid_price, 4) if p.is_buyer else None,
-                    'Ask_Price_euro/kWh': round(p.ask_price, 4) if p.is_seller else None,
-                    'Grid_Buy_Price_euro/kWh': round(price_forecast + (p.desired_quantity * config.LOCAL_MARKET_FEE), 4),
-                    'Grid_Sell_Price_euro/kWh': round(price_forecast - (p.desired_quantity * config.LOCAL_MARKET_FEE), 4)
-                }
-            elif p.is_banned:
-                timestep_data[timestep_key]['Prosumers'][f'Prosumer_{p.id}']['Trader_Status'] = {
-                    'Role': 'Banned',
-                    'Desired_Quantity_kWh': 0,
-                    'Bid_Price_euro/kWh': None,
-                    'Ask_Price_euro/kWh': None,
-                    'Grid_Buy_Price_euro/kWh': None,
-                    'Grid_Sell_Price_euro/kWh': None
-                }
-            else:
-                timestep_data[timestep_key]['Prosumers'][f'Prosumer_{p.id}']['Trader_Status'] = {
-                    'Role': 'Neutral',
-                    'Desired_Quantity_kWh': round(p.desired_quantity, 4),
-                    'Bid_Price_euro/kWh': None,
-                    'Ask_Price_euro/kWh': None,
-                    'Grid_Buy_Price_euro/kWh': None,
-                    'Grid_Sell_Price_euro/kWh': None
-                }
-
-########################
+            print(f"Total Asked Energy: {total_asked_energy:.2f} kWh | Total Bid Energy: {total_bid_energy:.2f} kWh")
+        
+        # Store original desired quantities before trading (for logging purposes)
+        original_desired_quantities = {p.id: p.desired_quantity for p in self.prosumers}
 
         # 4. Execute P2P trading
-        p2p_trades = self.p2p_mechanism.execute_p2p_trading(self.prosumers, timestep)   # execute P2P trading among prosumers at the current timestep
+        p2p_trades = self.p2p_mechanism.execute_p2p_trading(self.prosumers, timestep)
         
-        if config.VERBOSE:  # verbose output for P2P trades
+        # Store imbalances after P2P for logging
+        imbalances_after_p2p = {p.id: p.imbalance for p in self.prosumers}
+        
+        if config.VERBOSE:
             print(f"\nP2P Trading: {len(p2p_trades)} trades executed")
             if len(p2p_trades) > 0:
-                total_p2p_energy = sum(t.quantity for t in p2p_trades)  # total energy traded in P2P
-                avg_p2p_price = sum(t.price * t.quantity for t in p2p_trades) / total_p2p_energy if total_p2p_energy > 0 else 0 # average price of P2P trades
-                print(f"  Total Energy: {total_p2p_energy:.2f} kWh | Avg Price: euro{avg_p2p_price:.3f}/kWh")
-
-########################
-
-        # log to the prosumer that has traded the trades in the timestep_data
-        for trade in p2p_trades:
-            buyer_data = timestep_data[timestep_key]['Prosumers'][f'Prosumer_{trade.buyer_id}']
-            seller_data = timestep_data[timestep_key]['Prosumers'][f'Prosumer_{trade.seller_id}']
-            
-            if 'P2P_Trades' not in buyer_data:
-                buyer_data['P2P_Trades'] = []
-            if 'P2P_Trades' not in seller_data:
-                seller_data['P2P_Trades'] = []
-            
-            buyer_data['P2P_Trades'].append({
-                'Role': 'Buyer',
-                'Counterparty': trade.seller_id,
-                'Quantity_kWh': round(trade.quantity, 4),
-                'Price_euro/kWh': round(trade.price, 4)
-            })
-            seller_data['P2P_Trades'].append({
-                'Role': 'Seller',
-                'Counterparty': trade.buyer_id,
-                'Quantity_kWh': round(trade.quantity, 4),
-                'Price_euro/kWh': round(trade.price, 4)
-            })
-
-########################
-
-########################
-
-        # log each P2P trade in a json file
-
-        # read existing data or start with empty dict
-        try:
-            with open("results/trades.json", "r") as f:
-                trades_data = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            trades_data = {}
-        
-        # initialize timestep data
-        timestep_key = f'Timestep_{timestep}'
-        trades_data[timestep_key] = []
-        for trade in p2p_trades:
-            trades_data[timestep_key].append(trade.to_dict())
-            
-########################
-
-        # track imbalances - AFTER P2P (add to existing timestep_data)
-        for p in self.prosumers:
-            remaining = p.calculate_remaining_imbalance()
-            timestep_data[timestep_key]['Prosumers'][f'Prosumer_{p.id}']['Imbalances']['After_P2P'] = round(remaining, 4)
-                
-        # Add P2P trades to blockchain
-        for trade in p2p_trades:
-            self.blockchain.add_transaction(trade.to_dict())    # add each P2P trade as a transaction in the blockchain
-
-        # print the amount of satisfied buyers and sellers after P2P trading
-        if config.VERBOSE:
+                total_p2p_energy = sum(t.quantity for t in p2p_trades)
+                avg_p2p_price = sum(t.price * t.quantity for t in p2p_trades) / total_p2p_energy if total_p2p_energy > 0 else 0
+                print(f"  Total Energy: {total_p2p_energy:.2f} kWh | Avg Price: €{avg_p2p_price:.3f}/kWh")
             satisfied_buyers = sum(1 for p in self.prosumers if p.is_buyer and not p.is_banned and p.desired_quantity < 0.01)
             satisfied_sellers = sum(1 for p in self.prosumers if p.is_seller and not p.is_banned and p.desired_quantity < 0.01)
-            print(f"\nSatisfied Buyers after P2P: {satisfied_buyers} | Satisfied Sellers after P2P: {satisfied_sellers}")
-
-        # print any pending prosumers that have not traded yet
-        if config.VERBOSE:
+            print(f"Satisfied Buyers after P2P: {satisfied_buyers} | Satisfied Sellers after P2P: {satisfied_sellers}")
             pending_prosumers = [p for p in self.prosumers if (p.is_buyer or p.is_seller) and not p.is_banned and p.desired_quantity > 0]
             if pending_prosumers:
-                print(f"\nPending Prosumers (not traded yet): {len(pending_prosumers)}")
+                print(f"Pending Prosumers: {len(pending_prosumers)}")
+        
+        # Add P2P trades to blockchain
+        for trade in p2p_trades:
+            self.blockchain.add_transaction(trade.to_dict())
         
         # 5. Execute local market trading for remaining imbalances
-        market_trades = self.local_market.execute_local_market(
-            self.prosumers, price_forecast, timestep
-        )   # execute local market trading to balance remaining imbalances
+        market_trades = self.local_market.execute_local_market(self.prosumers, price_forecast, timestep)
         
-        if config.VERBOSE:  # verbose output for local market trades
-            print(f"\nLocal Market Trading: {len(market_trades)} trades executed")
-            if len(market_trades) > 0:  
-                total_market_energy = sum(t.quantity for t in market_trades)    # total energy traded in local market
-                print(f"  Total Energy: {total_market_energy:.2f} kWh")
-
-########################
-
-        # log to the prosumer that has traded the trades in the timestep_data
-        for trade in market_trades:
-            if trade.buyer_id == -1:
-                seller_data = timestep_data[timestep_key]['Prosumers'][f'Prosumer_{trade.seller_id}']
-                if 'Market_Trades' not in seller_data:
-                    seller_data['Market_Trades'] = []
-
-                seller_data['Market_Trades'].append({
-                    'Role': 'Seller',
-                    'Counterparty': 'Aggregator',
-                    'Quantity_kWh': round(trade.quantity, 4),
-                    'Price_euro/kWh': round(trade.price, 4)
-                })                
-            elif trade.seller_id == -1:
-                buyer_data = timestep_data[timestep_key]['Prosumers'][f'Prosumer_{trade.buyer_id}']
-                if 'Market_Trades' not in buyer_data:
-                    buyer_data['Market_Trades'] = []
-
-                buyer_data['Market_Trades'].append({
-                    'Role': 'Buyer',
-                    'Counterparty': 'Aggregator',
-                    'Quantity_kWh': round(trade.quantity, 4),
-                    'Price_euro/kWh': round(trade.price, 4)
-                })
-
-########################
-
-########################
-
-        # log each P2P trade in a json file
-        
-        # initialize timestep data
-        timestep_key = f'Timestep_{timestep}'
-        for trade in market_trades:
-            trades_data[timestep_key].append(trade.to_dict())
-        
-        # write everything back
-        with open("results/trades.json", "w") as f:
-            json.dump(trades_data, f, indent=4)
-            
-########################
-
-        # track imbalances - AFTER Local Market (add to existing timestep_data)
-        for p in self.prosumers:
-            remaining = p.calculate_remaining_imbalance()
-            timestep_data[timestep_key]['Prosumers'][f'Prosumer_{p.id}']['Imbalances']['After_Local_Market'] = round(remaining, 4)
-
-        # print the amount of satisfied buyers and sellers after local market trading
         if config.VERBOSE:
+            print(f"\nLocal Market Trading: {len(market_trades)} trades executed")
+            if len(market_trades) > 0:
+                total_market_energy = sum(t.quantity for t in market_trades)
+                print(f"  Total Energy: {total_market_energy:.2f} kWh")
             satisfied_buyers = sum(1 for p in self.prosumers if p.is_buyer and not p.is_banned and p.desired_quantity < 0.01)
             satisfied_sellers = sum(1 for p in self.prosumers if p.is_seller and not p.is_banned and p.desired_quantity < 0.01)
-            print(f"\nSatisfied Buyers after Local Market: {satisfied_buyers} | Satisfied Sellers after Local Market: {satisfied_sellers}")
+            print(f"Satisfied Buyers after Local Market: {satisfied_buyers} | Satisfied Sellers after Local Market: {satisfied_sellers}")
         
         # Add market trades to blockchain
         for trade in market_trades:
-            self.blockchain.add_transaction(trade.to_dict())    # add each local market trade as a transaction in the blockchain
+            self.blockchain.add_transaction(trade.to_dict())
         
         # 6. Mine blockchain blocks
-        if self.blockchain.pending_transactions:    # iterate over the pending transactions in the blockchain
-            mined_block = self.blockchain.mine_pending_transactions()   # attempt to mine a new block with pending transactions
-            if mined_block and config.VERBOSE:  # if mining was successful and verbose output is enabled
+        if self.blockchain.pending_transactions:
+            mined_block = self.blockchain.mine_pending_transactions()
+            if mined_block and config.VERBOSE:
                 print(f"\n⛏ Block #{mined_block.index} mined with {len(mined_block.transactions)} transactions")
                 print(f"  Hash: {mined_block.hash[:20]}... (Nonce: {mined_block.nonce})")
 
-        # 7. Update prosumer ban statuses
-        self.regulator.incentivize_renewable_usage(self.prosumers)   # apply incentives or penalties to prosumers based on their behavior
+        # 7. Update ban durations (decrement from previous timesteps)
+        self.regulator.update_prosumer_bans(self.prosumers)
         
-        # 9. Apply regulator incentives and enforce rules (which may apply new bans)
-        self.regulator.enforce_rules(self.prosumers, timestep)   # enforce regulatory rules on prosumers
-
-########################
-
-        # log regulator actions (add to existing timestep_data)
-        for p in self.prosumers:
-            timestep_data[timestep_key]['Prosumers'][f'Prosumer_{p.id}']['Regulator']['Applied_Bonus'] = round(p.bonus, 4)
-            timestep_data[timestep_key]['Prosumers'][f'Prosumer_{p.id}']['Regulator']['Applied_Penalties'] = round(p.penalties, 4)
-            timestep_data[timestep_key]['Prosumers'][f'Prosumer_{p.id}']['Regulator']['Is_Banned'] = p.is_banned
-            timestep_data[timestep_key]['Prosumers'][f'Prosumer_{p.id}']['Regulator']['Ban_Duration'] = p.ban_duration
-            timestep_data[timestep_key]['Prosumers'][f'Prosumer_{p.id}']['Regulator']['Reason_for_Ban'] = p.reason_for_ban
-
-        # Write all timestep data once at the end (after all data is collected)
-        with open("results/timestep_data.json", "w") as f:
-            json.dump(timestep_data, f, indent=4)
-
+        # 8. Apply incentives and penalties based on behavior
+        self.regulator.incentivize_renewable_usage(self.prosumers)
         
-        # 10. Reset trading state for next timestep
-        for prosumer in self.prosumers:  # iterate over each prosumer
-            prosumer.reset_trading_state()   # reset trading state for the next timestep
+        # 9. Enforce rules and apply new bans if needed
+        self.regulator.enforce_rules(self.prosumers, timestep)
+        
+        # 10. Log all data to CSV files
+        self._log_timestep_to_csv(timestep, hour, price_forecast, p2p_trades, market_trades,
+                                   imbalances_before_p2p, imbalances_after_p2p, original_desired_quantities)
+        
+        # 11. Reset trading state for next timestep
+        for prosumer in self.prosumers:
+            prosumer.reset_trading_state()
         
         # Log timestep summary
         self.simulation_log.append({

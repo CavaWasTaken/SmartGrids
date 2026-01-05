@@ -95,6 +95,17 @@ class Regulator:
                         'reason': 'negative_balance'
                     })  # add the prosumer to the banned list
     
+    def update_prosumer_bans(self, prosumers: List[Prosumer]):
+        """
+        Update ban status for all prosumers (decrement ban duration)
+        Should be called at the start of each timestep
+        
+        Args:
+            prosumers: List of prosumers
+        """
+        for prosumer in prosumers:
+            prosumer.update_ban_status()
+    
     def get_community_metrics(self, prosumers: List[Prosumer]) -> dict:
         """
         Calculate community-level metrics based on objective
