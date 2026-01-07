@@ -55,15 +55,11 @@ class Regulator:
             timestep: Current timestep
         """
         for prosumer in prosumers:  # iterate over each prosumer
+            # Skip already banned prosumers (ban duration is managed by update_ban_status())
             if prosumer.is_banned:
-                prosumer.ban_duration -= 1  # decrement ban duration
-                if prosumer.ban_duration <= 0:  # if ban duration has expired
-                    prosumer.is_banned = False  # lift the ban
-                    prosumer.ban_duration = 0   # reset ban duration
-                    prosumer.reason_for_ban = ""  # clear reason for ban
-                continue    # skip already banned prosumers
+                continue
 
-            if prosumer.penalties > 5.0 and prosumer.bonus < 5.0:  # if prosumer has high penalties and low bonuses
+            if prosumer.penalties > 2.0 and prosumer.bonus < 2.0:  # if prosumer has high penalties and low bonuses
                 # if the prosumer has been recently banned for the same reason, skip re-banning
                 recent_bans = [ban for ban in self.banned_prosumers 
                                if ban['prosumer_id'] == prosumer.id and 
@@ -79,7 +75,7 @@ class Regulator:
                     'reason': 'excessive_market_usage'
                 })  # add the prosumer to the banned list
             
-            if prosumer.balance < -50.0:  # if prosumer has very negative balance
+            if prosumer.balance < -20.0:  # if prosumer has very negative balance
                 # if the prosumer has been recently banned for the same reason, skip re-banning
                 recent_bans = [ban for ban in self.banned_prosumers 
                                if ban['prosumer_id'] == prosumer.id and 

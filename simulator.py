@@ -98,13 +98,14 @@ class CommunitySimulator:
         
         for i in range(config.NUM_PROSUMERS):
             home_index = random.randint(0, len(config.PV_CAPACITY) - 1)
-            pv_capacity = config.PV_CAPACITY[home_index]  # choose a random PV capacity from the list
-            base_consumption = config.BASE_CONSUMPTION[home_index]  # choose a random base consumption from the list
-            has_battery = random.random() < config.HAS_BATTERY  # determine if prosumer has a battery
-            battery_capacity = config.BATTERY_CAPACITY[home_index] if has_battery else 0.0  # choose a random battery capacity from the list
+            pv_capacity = config.PV_CAPACITY[home_index]  # PV capacity determined by home type
+            base_consumption = config.BASE_CONSUMPTION[home_index]  # Consumption determined by home type
+            has_battery = random.random() < config.HAS_BATTERY  # 80% chance of having battery
+            # Battery capacity now consistent per home type (not random)
+            battery_capacity = config.BATTERY_CAPACITY[home_index] if has_battery else 0.0
             
-            prosumer = Prosumer(i, pv_capacity, base_consumption, battery_capacity, home_index)   # initialize prosumer with ID, PV capacity, base consumption, battery capacity, and home type index
-            self.prosumers.append(prosumer) # add prosumer to the community list
+            prosumer = Prosumer(i, pv_capacity, base_consumption, battery_capacity, home_index)
+            self.prosumers.append(prosumer)
         
         print(f"✓ Created {len(self.prosumers)} prosumers")
     

@@ -163,26 +163,45 @@ class SimulationVisualizer:
         ax1.grid(True, alpha=0.3)
         ax1.set_xticks(range(0, 24))
         
-        # Plot 2: P2P trade prices distribution by hour
+        # Plot 2: P2P vs Local Market trade prices comparison
         ax2 = axes[1]
         p2p_trades = self.all_trades[self.all_trades['Trade_Type'] == 'p2p']
+        market_trades = self.all_trades[self.all_trades['Trade_Type'] == 'local_market']
         
         if len(p2p_trades) > 0:
             # Group by hour and calculate statistics
-            hourly_prices = p2p_trades.groupby('Hour')['Price_Euro_kWh'].agg(['mean', 'min', 'max'])
+            hourly_p2p_prices = p2p_trades.groupby('Hour')['Price_Euro_kWh'].agg(['mean', 'min', 'max'])
             
-            ax2.plot(hourly_prices.index, hourly_prices['mean'], 
-                    color='#2ecc71', linewidth=2.5, marker='o', label='Avg P2P Price')
-            ax2.fill_between(hourly_prices.index, hourly_prices['min'], hourly_prices['max'],
-                            alpha=0.3, color='#2ecc71', label='P2P Price Range')
-            ax2.plot(self.community_summary['Hour'], 
-                    self.community_summary['Price_Forecast_Euro_kWh'],
-                    color='#9b59b6', linewidth=2, linestyle='--', label='Grid Price Forecast')
+            ax2.plot(hourly_p2p_prices.index, hourly_p2p_prices['mean'], 
+                    color='#2ecc71', linewidth=2.5, marker='o', markersize=7, label='Avg P2P Price')
+            ax2.fill_between(hourly_p2p_prices.index, hourly_p2p_prices['min'], hourly_p2p_prices['max'],
+                            alpha=0.2, color='#2ecc71', label='P2P Price Range')
+        
+        # Show local market buy and sell prices separately
+        from config import LOCAL_MARKET_FEE
+        grid_prices = self.community_summary['Price_Forecast_Euro_kWh'].values
+        hours = self.community_summary['Hour'].values
+        
+        # Local market buy price (what buyers pay)
+        market_buy_price = grid_prices + LOCAL_MARKET_FEE
+        ax2.plot(hours, market_buy_price,
+                color='#e74c3c', linewidth=2.5, marker='s', markersize=6, 
+                label='Local Market (Buy)', linestyle='-', alpha=0.8)
+        
+        # Local market sell price (what sellers receive)
+        market_sell_price = grid_prices - LOCAL_MARKET_FEE
+        ax2.plot(hours, market_sell_price,
+                color='#e67e22', linewidth=2.5, marker='v', markersize=6,
+                label='Local Market (Sell)', linestyle='-', alpha=0.8)
+        
+        # Grid base price (reference)
+        ax2.plot(hours, grid_prices,
+                color='#9b59b6', linewidth=2, linestyle='--', alpha=0.7, label='Grid Base Price')
         
         ax2.set_xlabel('Hour of Day', fontsize=12, fontweight='bold')
         ax2.set_ylabel('Price (€/kWh)', fontsize=12, fontweight='bold')
-        ax2.set_title('P2P Trade Prices vs Grid Forecast', fontsize=14, fontweight='bold')
-        ax2.legend(fontsize=11)
+        ax2.set_title('P2P vs Local Market vs Grid Prices', fontsize=14, fontweight='bold')
+        ax2.legend(fontsize=10, loc='best')
         ax2.grid(True, alpha=0.3)
         ax2.set_xticks(range(0, 24))
         
@@ -416,10 +435,27 @@ class SimulationVisualizer:
         # Merge data - use suffixes to handle duplicate columns
         prosumer_summary = final_state.merge(final_trading, on='Prosumer_ID', suffixes=('', '_trading'))
         
-        # Group by home type (use the column from energy data)
+        # Get home type from first timestep
+        first_state = self.prosumer_energy.groupby('Prosumer_ID').first().reset_index()
+        prosumer_summary = prosumer_summary.merge(first_state[['Prosumer_ID', 'Home_Type_Index']], 
+                                                   on='Prosumer_ID', how='left', suffixes=('', '_first'))
+        # Use Home_Type_Index_first if the merge created duplicates, otherwise use existing
+        if 'Home_Type_Index_first' in prosumer_summary.columns:
+            prosumer_summary['Home_Type_Index'] = prosumer_summary['Home_Type_Index_first']
+            prosumer_summary.drop(columns=['Home_Type_Index_first'], inplace=True)
+        
+        # Calculate daily totals per prosumer
+        daily_consumption = self.prosumer_energy.groupby('Prosumer_ID')['Consumption_kWh'].sum()
+        prosumer_summary['Daily_Consumption_kWh'] = prosumer_summary['Prosumer_ID'].map(daily_consumption)
+        
+        # Map home type to actual config values
+        from config import PV_CAPACITY, BATTERY_CAPACITY
+        prosumer_summary['PV_Capacity_kW'] = prosumer_summary['Home_Type_Index'].apply(lambda x: PV_CAPACITY[x])
+        
+        # Group by home type
         home_type_stats = prosumer_summary.groupby('Home_Type_Index').agg({
-            'PV_Generation_kWh': 'mean',
-            'Consumption_kWh': 'mean',
+            'PV_Capacity_kW': 'mean',
+            'Daily_Consumption_kWh': 'mean',
             'Battery_Capacity_kWh': 'mean',
             'Balance_Euro': 'mean',
             'Renewable_Usage_kWh': 'mean',
@@ -434,36 +470,62 @@ class SimulationVisualizer:
             home_type_stats['P2P_Trades_Count'] + home_type_stats['Market_Trades_Count'] / home_type_stats['Count']
         )
         
-        # Plot 1: Home Type Configurations (PV, Battery, Consumption)
+        # Plot 1: Home Type Configurations (PV, Battery, Consumption) - Dual Y-axis
         ax1 = fig.add_subplot(gs[0, :])
-        x = home_type_stats['Home_Type_Index']
-        width = 0.25
+        ax1_right = ax1.twinx()
         
-        ax1.bar(x - width, home_type_stats['PV_Generation_kWh'], width, 
-                label='Avg PV Capacity', color='#f39c12', alpha=0.8)
-        ax1.bar(x, home_type_stats['Consumption_kWh'], width,
-                label='Avg Consumption', color='#3498db', alpha=0.8)
-        ax1.bar(x + width, home_type_stats['Battery_Capacity_kWh'], width,
-                label='Avg Battery Capacity', color='#2ecc71', alpha=0.8)
+        x = home_type_stats['Home_Type_Index']
+        width = 0.28
+        
+        # Left Y-axis: PV and Consumption (smaller values)
+        ax1.bar(x - width/2, home_type_stats['PV_Capacity_kW'], width, 
+                label='PV Capacity (kW)', color='#f39c12', alpha=0.8)
+        ax1.bar(x + width/2, home_type_stats['Daily_Consumption_kWh'], width,
+                label='Daily Consumption (kWh/day)', color='#3498db', alpha=0.8)
+        
+        # Right Y-axis: Battery Capacity (larger values)
+        ax1_right.bar(x, home_type_stats['Battery_Capacity_kWh'], width*0.6,
+                label='Battery Capacity (kWh)', color='#2ecc71', alpha=0.7, edgecolor='darkgreen', linewidth=1.5)
         
         ax1.set_xlabel('Home Type Index', fontsize=12, fontweight='bold')
-        ax1.set_ylabel('Energy (kWh)', fontsize=12, fontweight='bold')
+        ax1.set_ylabel('PV (kW) / Consumption (kWh/day)', fontsize=11, fontweight='bold', color='black')
+        ax1_right.set_ylabel('Battery (kWh)', fontsize=11, fontweight='bold', color='#2ecc71')
         ax1.set_title('Home Type Configurations: PV, Battery & Consumption Capacity', 
                      fontsize=14, fontweight='bold')
         ax1.set_xticks(x)
-        ax1.legend(fontsize=10, loc='upper left')
+        ax1_right.tick_params(axis='y', labelcolor='#2ecc71')
+        
+        # Combined legend
+        lines1, labels1 = ax1.get_legend_handles_labels()
+        lines2, labels2 = ax1_right.get_legend_handles_labels()
+        ax1.legend(lines1 + lines2, labels1 + labels2, fontsize=10, loc='upper left', ncol=3)
         ax1.grid(True, alpha=0.3, axis='y')
         
-        # Plot 2: Prosumer Count by Home Type
+        # Plot 2: Battery Distribution by Home Type
         ax2 = fig.add_subplot(gs[1, 0])
-        colors_gradient = plt.cm.viridis(np.linspace(0.3, 0.9, len(home_type_stats)))
-        ax2.bar(home_type_stats['Home_Type_Index'], home_type_stats['Count'],
-                color=colors_gradient, alpha=0.8, edgecolor='black')
+        
+        # Calculate prosumers with and without batteries per home type
+        battery_dist = prosumer_summary.groupby('Home_Type_Index').agg({
+            'Battery_Capacity_kWh': lambda x: (x > 0).sum(),  # Count with battery
+            'Prosumer_ID': 'count'  # Total count
+        }).reset_index()
+        battery_dist['Without_Battery'] = battery_dist['Prosumer_ID'] - battery_dist['Battery_Capacity_kWh']
+        battery_dist.rename(columns={'Battery_Capacity_kWh': 'With_Battery'}, inplace=True)
+        
+        x_pos = np.arange(len(battery_dist))
+        ax2.bar(x_pos, battery_dist['With_Battery'], 0.6,
+                label='With Battery', color='#2ecc71', alpha=0.8, edgecolor='black')
+        ax2.bar(x_pos, battery_dist['Without_Battery'], 0.6,
+                bottom=battery_dist['With_Battery'],
+                label='Without Battery', color='#95a5a6', alpha=0.8, edgecolor='black')
+        
         ax2.set_xlabel('Home Type Index', fontsize=11, fontweight='bold')
         ax2.set_ylabel('Number of Prosumers', fontsize=11, fontweight='bold')
-        ax2.set_title('Distribution of Home Types', fontsize=12, fontweight='bold')
+        ax2.set_title('Battery Distribution by Home Type', fontsize=12, fontweight='bold')
+        ax2.set_xticks(x_pos)
+        ax2.set_xticklabels(battery_dist['Home_Type_Index'])
         ax2.grid(True, alpha=0.3, axis='y')
-        ax2.set_xticks(home_type_stats['Home_Type_Index'])
+        ax2.legend(fontsize=9, loc='upper left')
         
         # Plot 3: Average Balance by Home Type
         ax3 = fig.add_subplot(gs[1, 1])
@@ -501,20 +563,19 @@ class SimulationVisualizer:
         ax5.set_xticklabels(home_type_stats['Home_Type_Index'])
         ax5.legend(fontsize=9)
         ax5.grid(True, alpha=0.3, axis='y')
-        
+
         # Plot 6: P2P Ratio by Home Type
         ax6 = fig.add_subplot(gs[2, 1])
         p2p_ratio_pct = home_type_stats['Avg_P2P_Ratio'] * 100
         ax6.bar(home_type_stats['Home_Type_Index'], p2p_ratio_pct,
-                color='#16a085', alpha=0.7, edgecolor='black')
-        ax6.axhline(y=50, color='gray', linestyle='--', linewidth=1, alpha=0.5, label='50%')
+                color='#8e44ad', alpha=0.7, edgecolor='black')
         ax6.set_xlabel('Home Type Index', fontsize=11, fontweight='bold')
-        ax6.set_ylabel('P2P Trade Ratio (%)', fontsize=11, fontweight='bold')
-        ax6.set_title('P2P vs Market Preference', fontsize=12, fontweight='bold')
-        ax6.set_ylim([0, 100])
+        ax6.set_ylabel('Average P2P Ratio (%)', fontsize=11, fontweight='bold')
+        ax6.set_title('Average P2P Trade Ratio by Home Type', fontsize=12, fontweight='bold')
         ax6.grid(True, alpha=0.3, axis='y')
         ax6.set_xticks(home_type_stats['Home_Type_Index'])
-        ax6.legend(fontsize=9)
+        ax6.set_ylim([0, 100])
+        ax6.legend(['P2P Ratio (%)'], fontsize=9)
         
         # Plot 7: Scatter - Balance vs Renewable Usage
         ax7 = fig.add_subplot(gs[2, 2])
