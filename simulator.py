@@ -11,8 +11,7 @@ from blockchain import Blockchain
 from regulator import Regulator
 from data_generation import generate_pv_generation, generate_consumption, forecast_price
 import config
-import json
-
+from plot_results import SimulationVisualizer
 
 class CommunitySimulator:
     """
@@ -342,6 +341,10 @@ class CommunitySimulator:
         
         # Generate final report
         self.generate_final_report()
+
+        # Generate plots
+        plot_generator = SimulationVisualizer("results")
+        plot_generator.generate_all_plots()
     
     def generate_final_report(self):
         """Generate and display final simulation report"""
@@ -383,35 +386,3 @@ class CommunitySimulator:
                   f"Renewable: {p.renewable_usage:.1f} kWh)")
         
         print("\n" + "="*70)
-    
-    def get_simulation_data(self) -> dict:
-        """
-        Get all simulation data for export
-        
-        Returns:
-            Dictionary with all simulation data
-        """
-        return {
-            'config': {
-                'num_prosumers': config.NUM_PROSUMERS,
-                'time_steps': config.TIME_STEPS,
-                'objective': config.REGULATOR_OBJECTIVE,
-                'difficulty': config.DIFFICULTY_TARGET,
-                'num_miners': config.NUM_MINERS
-            },  # configuration parameters
-            'prosumers': [
-                {
-                    'id': p.id,
-                    'pv_capacity': p.pv_capacity,
-                    'base_consumption': p.base_consumption,
-                    'balance': round(p.balance, 2),
-                    'renewable_usage': round(p.renewable_usage, 2),
-                    'p2p_trades': p.p2p_trades,
-                    'market_trades': p.market_trades
-                }
-                for p in self.prosumers
-            ],  # list of prosumer data
-            'blockchain': self.blockchain.to_dict(),    # blockchain data
-            'regulator': self.regulator.get_community_metrics(self.prosumers),  # community metrics
-            'simulation_log': self.simulation_log   # log of simulation timesteps
-        }
