@@ -11,7 +11,7 @@ def generate_pv_generation(hour: int, pv_capacity: float) -> float:
     """
 
     # Daylight hours: 6 AM to 6 PM
-    if hour < 6 or hour >= 18:
+    if hour < 6 or hour > 18:
         return 0.0
 
     # Map hour to daylight index: 0 → 12
