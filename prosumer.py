@@ -164,11 +164,15 @@ class Prosumer:
             spread = grid_buy_price - grid_sell_price  # evaluate spread between grid buy and sell prices
             urgency = self.desired_quantity / max_trade_cap  # evaluate urgency based on desired quantity
             
-            noise = random.uniform(0.95, 1.02)   # strategic factor to adjust bid price
+            noise = random.uniform(0.97, 1.01)   # strategic factor to adjust bid price
 
-            calculated_bid = (grid_buy_price - (urgency * spread)) * noise  # set bid price starting from grid_buy_price, decreasing with urgency
-            self.bid_price = min(calculated_bid, grid_buy_price * 0.99)  # ensure bid price is below grid buy price
-            self.bid_price = max(self.bid_price, grid_sell_price * 1.05)  # ensure bid price leaves room for P2P matching
+            # Buyers bid closer to grid_buy_price as urgency increases (willing to pay more when desperate)
+            # Start from midpoint and move toward grid_buy with urgency
+            midpoint = (grid_sell_price + grid_buy_price) / 2
+            calculated_bid = (midpoint + (urgency * spread * 0.5)) * noise  # willing to pay more when urgent
+            
+            self.bid_price = min(calculated_bid, grid_buy_price * 0.97)  # ensure bid price is below grid buy price
+            self.bid_price = max(self.bid_price, grid_sell_price * 1.08)  # ensure bid price leaves room for P2P matching
 
         else:  # if balanced, no trading needed
             self.is_buyer = False   # reset buyer status
@@ -177,10 +181,14 @@ class Prosumer:
 
     def becomes_seller(self, offered_quantity: float, price_forecast: float, local_market_fee: float, max_trade_cap: float):
         """
-        Make prosumer a seller of the offered quantity
+        Make prosumer a seller of the offered quantity from battery
+        Battery sellers price more competitively than PV surplus sellers to facilitate P2P trades
         
         Args:
             offered_quantity: Quantity offered to sell in kWh
+            price_forecast: Forecasted market price in €/kWh
+            local_market_fee: Fee for local market trading in €/kWh
+            max_trade_cap: Maximum trade quantity per prosumer per time step in kWh
         """
 
         self.selling_from_battery = True  # indicate that the prosumer is selling energy from battery
@@ -195,11 +203,20 @@ class Prosumer:
         spread = grid_buy_price - grid_sell_price  # evaluate spread between grid buy and sell prices
         urgency = self.desired_quantity / max_trade_cap  # evaluate urgency based on desired quantity
 
-        noise = random.uniform(0.98, 1.05)   # strategic factor to adjust ask price
-
-        calculated_ask = (grid_sell_price + (urgency * spread)) * noise  # set ask price starting from grid_sell_price, increasing with urgency
-        self.ask_price = max(calculated_ask, grid_sell_price * 1.01)  # ensure ask price is above grid sell price
-        self.ask_price = min(self.ask_price, grid_buy_price * 0.95)  # ensure ask price leaves room for P2P matching
+        # Battery sellers price more competitively (lower noise, smaller urgency factor)
+        # This makes them attractive to buyers who would otherwise go to local market
+        noise = random.uniform(0.95, 1.00)   # lower noise range than PV sellers (0.98-1.05)
+        
+        # Start from midpoint between grid_sell and price_forecast, not grid_sell_price
+        # This accounts for battery storage costs but remains competitive
+        base_battery_price = (grid_sell_price + price_forecast) / 2  # ~0.135 for forecast=0.15
+        
+        # Add smaller urgency premium (0.3x instead of 1.0x of spread)
+        calculated_ask = (base_battery_price + (urgency * spread * 0.3)) * noise
+        
+        # Ensure price is above grid_sell but below typical buyer bids
+        self.ask_price = max(calculated_ask, grid_sell_price * 1.03)  # min 3% above grid sell
+        self.ask_price = min(self.ask_price, grid_buy_price * 0.85)  # max 85% of grid buy (vs 95% for PV)
 
     
     def get_min_soc(self) -> float:
