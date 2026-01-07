@@ -11,7 +11,7 @@ class Prosumer:
     Represents a prosumer in the energy community
     """
     
-    def __init__(self, prosumer_id: int, pv_capacity: float, base_consumption: float, battery_capacity: float):
+    def __init__(self, prosumer_id: int, pv_capacity: float, base_consumption: float, battery_capacity: float, home_type_index: int = 0):
         """
         Initialize a prosumer
         
@@ -19,8 +19,11 @@ class Prosumer:
             prosumer_id: Unique identifier
             pv_capacity: PV panel capacity in kW
             base_consumption: Base consumption level in kWh per time step
+            battery_capacity: Battery capacity in kWh
+            home_type_index: Index of the home configuration type
         """
         self.id = prosumer_id   # unique prosumer ID
+        self.home_type_index = home_type_index  # home configuration index
         self.pv_capacity = pv_capacity   # PV panel capacity in kW
         self.base_consumption = base_consumption   # base consumption level in kWh per time step
         self.has_battery = battery_capacity > 0.0  # whether prosumer has a battery

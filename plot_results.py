@@ -404,6 +404,145 @@ class SimulationVisualizer:
         print("✓ Generated: trade_volume_analysis.png")
         plt.close()
     
+    def plot_home_type_analysis(self):
+        """Plot characteristics and behavior analysis by home type"""
+        fig = plt.figure(figsize=(18, 12))
+        gs = fig.add_gridspec(3, 3, hspace=0.35, wspace=0.3)
+        
+        # Get final state for each prosumer
+        final_state = self.prosumer_energy.groupby('Prosumer_ID').last().reset_index()
+        final_trading = self.prosumer_trading.groupby('Prosumer_ID').last().reset_index()
+        
+        # Merge data - use suffixes to handle duplicate columns
+        prosumer_summary = final_state.merge(final_trading, on='Prosumer_ID', suffixes=('', '_trading'))
+        
+        # Group by home type (use the column from energy data)
+        home_type_stats = prosumer_summary.groupby('Home_Type_Index').agg({
+            'PV_Generation_kWh': 'mean',
+            'Consumption_kWh': 'mean',
+            'Battery_Capacity_kWh': 'mean',
+            'Balance_Euro': 'mean',
+            'Renewable_Usage_kWh': 'mean',
+            'P2P_Trades_Count': 'mean',
+            'Market_Trades_Count': 'sum',
+            'Prosumer_ID': 'count'
+        }).reset_index()
+        home_type_stats.rename(columns={'Prosumer_ID': 'Count'}, inplace=True)
+        
+        # Calculate additional metrics
+        home_type_stats['Avg_P2P_Ratio'] = home_type_stats['P2P_Trades_Count'] / (
+            home_type_stats['P2P_Trades_Count'] + home_type_stats['Market_Trades_Count'] / home_type_stats['Count']
+        )
+        
+        # Plot 1: Home Type Configurations (PV, Battery, Consumption)
+        ax1 = fig.add_subplot(gs[0, :])
+        x = home_type_stats['Home_Type_Index']
+        width = 0.25
+        
+        ax1.bar(x - width, home_type_stats['PV_Generation_kWh'], width, 
+                label='Avg PV Capacity', color='#f39c12', alpha=0.8)
+        ax1.bar(x, home_type_stats['Consumption_kWh'], width,
+                label='Avg Consumption', color='#3498db', alpha=0.8)
+        ax1.bar(x + width, home_type_stats['Battery_Capacity_kWh'], width,
+                label='Avg Battery Capacity', color='#2ecc71', alpha=0.8)
+        
+        ax1.set_xlabel('Home Type Index', fontsize=12, fontweight='bold')
+        ax1.set_ylabel('Energy (kWh)', fontsize=12, fontweight='bold')
+        ax1.set_title('Home Type Configurations: PV, Battery & Consumption Capacity', 
+                     fontsize=14, fontweight='bold')
+        ax1.set_xticks(x)
+        ax1.legend(fontsize=10, loc='upper left')
+        ax1.grid(True, alpha=0.3, axis='y')
+        
+        # Plot 2: Prosumer Count by Home Type
+        ax2 = fig.add_subplot(gs[1, 0])
+        colors_gradient = plt.cm.viridis(np.linspace(0.3, 0.9, len(home_type_stats)))
+        ax2.bar(home_type_stats['Home_Type_Index'], home_type_stats['Count'],
+                color=colors_gradient, alpha=0.8, edgecolor='black')
+        ax2.set_xlabel('Home Type Index', fontsize=11, fontweight='bold')
+        ax2.set_ylabel('Number of Prosumers', fontsize=11, fontweight='bold')
+        ax2.set_title('Distribution of Home Types', fontsize=12, fontweight='bold')
+        ax2.grid(True, alpha=0.3, axis='y')
+        ax2.set_xticks(home_type_stats['Home_Type_Index'])
+        
+        # Plot 3: Average Balance by Home Type
+        ax3 = fig.add_subplot(gs[1, 1])
+        colors_balance = ['green' if x > 0 else 'red' for x in home_type_stats['Balance_Euro']]
+        ax3.barh(home_type_stats['Home_Type_Index'], home_type_stats['Balance_Euro'],
+                color=colors_balance, alpha=0.7, edgecolor='black')
+        ax3.set_ylabel('Home Type Index', fontsize=11, fontweight='bold')
+        ax3.set_xlabel('Average Balance (€)', fontsize=11, fontweight='bold')
+        ax3.set_title('Financial Performance by Home Type', fontsize=12, fontweight='bold')
+        ax3.axvline(x=0, color='black', linestyle='-', linewidth=1)
+        ax3.grid(True, alpha=0.3, axis='x')
+        ax3.set_yticks(home_type_stats['Home_Type_Index'])
+        
+        # Plot 4: Renewable Usage by Home Type
+        ax4 = fig.add_subplot(gs[1, 2])
+        ax4.bar(home_type_stats['Home_Type_Index'], home_type_stats['Renewable_Usage_kWh'],
+                color='#27ae60', alpha=0.7, edgecolor='black')
+        ax4.set_xlabel('Home Type Index', fontsize=11, fontweight='bold')
+        ax4.set_ylabel('Renewable Usage (kWh)', fontsize=11, fontweight='bold')
+        ax4.set_title('Renewable Energy Usage', fontsize=12, fontweight='bold')
+        ax4.grid(True, alpha=0.3, axis='y')
+        ax4.set_xticks(home_type_stats['Home_Type_Index'])
+        
+        # Plot 5: Trading Activity by Home Type
+        ax5 = fig.add_subplot(gs[2, 0])
+        x_pos = np.arange(len(home_type_stats))
+        ax5.bar(x_pos - 0.2, home_type_stats['P2P_Trades_Count'], 0.4,
+                label='Avg P2P Trades', color='#2ecc71', alpha=0.8)
+        ax5.bar(x_pos + 0.2, home_type_stats['Market_Trades_Count'] / home_type_stats['Count'], 0.4,
+                label='Avg Market Trades', color='#e74c3c', alpha=0.8)
+        ax5.set_xlabel('Home Type Index', fontsize=11, fontweight='bold')
+        ax5.set_ylabel('Average Trades per Prosumer', fontsize=11, fontweight='bold')
+        ax5.set_title('Trading Activity by Home Type', fontsize=12, fontweight='bold')
+        ax5.set_xticks(x_pos)
+        ax5.set_xticklabels(home_type_stats['Home_Type_Index'])
+        ax5.legend(fontsize=9)
+        ax5.grid(True, alpha=0.3, axis='y')
+        
+        # Plot 6: P2P Ratio by Home Type
+        ax6 = fig.add_subplot(gs[2, 1])
+        p2p_ratio_pct = home_type_stats['Avg_P2P_Ratio'] * 100
+        ax6.bar(home_type_stats['Home_Type_Index'], p2p_ratio_pct,
+                color='#16a085', alpha=0.7, edgecolor='black')
+        ax6.axhline(y=50, color='gray', linestyle='--', linewidth=1, alpha=0.5, label='50%')
+        ax6.set_xlabel('Home Type Index', fontsize=11, fontweight='bold')
+        ax6.set_ylabel('P2P Trade Ratio (%)', fontsize=11, fontweight='bold')
+        ax6.set_title('P2P vs Market Preference', fontsize=12, fontweight='bold')
+        ax6.set_ylim([0, 100])
+        ax6.grid(True, alpha=0.3, axis='y')
+        ax6.set_xticks(home_type_stats['Home_Type_Index'])
+        ax6.legend(fontsize=9)
+        
+        # Plot 7: Scatter - Balance vs Renewable Usage
+        ax7 = fig.add_subplot(gs[2, 2])
+        scatter = ax7.scatter(home_type_stats['Renewable_Usage_kWh'], 
+                             home_type_stats['Balance_Euro'],
+                             s=home_type_stats['Count']*20,
+                             c=home_type_stats['Home_Type_Index'],
+                             cmap='viridis', alpha=0.6, edgecolors='black', linewidth=2)
+        
+        # Add labels for each home type
+        for idx, row in home_type_stats.iterrows():
+            ax7.annotate(f"HT{int(row['Home_Type_Index'])}", 
+                        (row['Renewable_Usage_kWh'], row['Balance_Euro']),
+                        fontsize=9, fontweight='bold', ha='center')
+        
+        ax7.set_xlabel('Renewable Usage (kWh)', fontsize=11, fontweight='bold')
+        ax7.set_ylabel('Average Balance (€)', fontsize=11, fontweight='bold')
+        ax7.set_title('Balance vs Renewable Usage\n(size = prosumer count)', 
+                     fontsize=12, fontweight='bold')
+        ax7.grid(True, alpha=0.3)
+        ax7.axhline(y=0, color='red', linestyle='--', linewidth=1, alpha=0.5)
+        
+        plt.colorbar(scatter, ax=ax7, label='Home Type Index')
+        
+        plt.savefig(os.path.join(self.plots_dir, 'home_type_analysis.png'), dpi=300, bbox_inches='tight')
+        print("✓ Generated: home_type_analysis.png")
+        plt.close()
+    
     def generate_all_plots(self):
         """Generate all visualization plots"""
         print("\n" + "="*70)
@@ -417,6 +556,7 @@ class SimulationVisualizer:
         self.plot_prosumer_performance()
         self.plot_regulator_impact()
         self.plot_trade_volume_analysis()
+        self.plot_home_type_analysis()
         
         print("\n" + "="*70)
         print(f"✓ ALL PLOTS SAVED TO: {self.plots_dir}")

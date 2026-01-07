@@ -49,7 +49,7 @@ class CommunitySimulator:
         with open("results/prosumer_energy.csv", "w", newline="") as f:
             writer = csv.writer(f)
             writer.writerow([
-                "Timestep", "Hour", "Prosumer_ID", "PV_Generation_kWh", "Consumption_kWh",
+                "Timestep", "Hour", "Prosumer_ID", "Home_Type_Index", "PV_Generation_kWh", "Consumption_kWh",
                 "Battery_Level_kWh", "Battery_Capacity_kWh", "Battery_SOC_%",
                 "Battery_Charged_kWh", "Battery_Discharged_kWh",
                 "Imbalance_Before_P2P_kWh", "Imbalance_After_P2P_kWh", 
@@ -60,7 +60,7 @@ class CommunitySimulator:
         with open("results/prosumer_trading.csv", "w", newline="") as f:
             writer = csv.writer(f)
             writer.writerow([
-                "Timestep", "Hour", "Prosumer_ID", "Role", "Is_Banned",
+                "Timestep", "Hour", "Prosumer_ID", "Home_Type_Index", "Role", "Is_Banned",
                 "Desired_Quantity_kWh", "Bid_Price_Euro_kWh", "Ask_Price_Euro_kWh",
                 "P2P_Trades_Count", "Market_Trades_Count"
             ])
@@ -103,7 +103,7 @@ class CommunitySimulator:
             has_battery = random.random() < config.HAS_BATTERY  # determine if prosumer has a battery
             battery_capacity = config.BATTERY_CAPACITY[home_index] if has_battery else 0.0  # choose a random battery capacity from the list
             
-            prosumer = Prosumer(i, pv_capacity, base_consumption, battery_capacity)   # initialize prosumer with ID, PV capacity, base consumption, and battery capacity
+            prosumer = Prosumer(i, pv_capacity, base_consumption, battery_capacity, home_index)   # initialize prosumer with ID, PV capacity, base consumption, battery capacity, and home type index
             self.prosumers.append(prosumer) # add prosumer to the community list
         
         print(f"✓ Created {len(self.prosumers)} prosumers")
@@ -131,7 +131,7 @@ class CommunitySimulator:
             for p in self.prosumers:
                 battery_info = p.get_battery_info()
                 writer.writerow([
-                    timestep, hour, p.id, round(p.pv_generation, 4), round(p.consumption, 4),
+                    timestep, hour, p.id, p.home_type_index, round(p.pv_generation, 4), round(p.consumption, 4),
                     battery_info['level'], battery_info['capacity'], battery_info['soc'],
                     round(p.battery_charged_kwh, 4), round(p.battery_discharged_kwh, 4),
                     round(imbalances_before_p2p.get(p.id, 0), 4),
@@ -145,7 +145,7 @@ class CommunitySimulator:
             for p in self.prosumers:
                 role = "Banned" if p.is_banned else ("Buyer" if p.is_buyer else ("Seller" if p.is_seller else "Neutral"))
                 writer.writerow([
-                    timestep, hour, p.id, role, p.is_banned,
+                    timestep, hour, p.id, p.home_type_index, role, p.is_banned,
                     round(original_desired_quantities.get(p.id, 0), 4) if not p.is_banned else 0,
                     round(p.bid_price, 4) if p.is_buyer else None,
                     round(p.ask_price, 4) if p.is_seller else None,
