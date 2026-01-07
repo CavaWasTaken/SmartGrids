@@ -86,8 +86,12 @@ class Prosumer:
             if initial_imbalance > 0:  # SURPLUS - try to store in battery
                 # Calculate how much we can store (respecting max SoC and efficiency)
                 max_level = self.battery_capacity * config.BATTERY_MAX_SOC
-                max_storable = max(0, max_level - self.battery_level)
-                energy_to_store = min(initial_imbalance, max_storable)
+                available_space = max(0, max_level - self.battery_level)
+                
+                # Account for efficiency loss: if we have X space, we can input X/efficiency
+                # This ensures battery reaches exactly max_level when fully charged
+                max_input_energy = available_space / config.BATTERY_EFFICIENCY
+                energy_to_store = min(initial_imbalance, max_input_energy)
                 
                 # Store energy in battery (with charging efficiency loss)
                 actual_stored = energy_to_store * config.BATTERY_EFFICIENCY
