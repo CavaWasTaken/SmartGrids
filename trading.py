@@ -180,13 +180,9 @@ class LocalMarketMechanism:
         trades = [] # list of executed trades at this time step
         
         # Get prosumers still with imbalance after P2P
-        buyers = [p for p in prosumers if not p.is_banned and 
-                  p.desired_quantity > 0.01 and 
-                  p.calculate_remaining_imbalance() < -0.01]    # buyers needing energy
+        buyers = [p for p in prosumers if p.desired_quantity > 0.01 and p.calculate_remaining_imbalance() < -0.01]    # buyers needing energy
         
-        sellers = [p for p in prosumers if not p.is_banned and 
-                   p.desired_quantity > 0.01 and 
-                   p.calculate_remaining_imbalance() > 0.01]   # sellers with surplus energy
+        sellers = [p for p in prosumers if p.desired_quantity > 0.01 and p.calculate_remaining_imbalance() > 0.01]   # sellers with surplus energy
         
         if not buyers and not sellers:  # if no buyers or sellers, no trades possible
             return trades

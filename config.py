@@ -1,7 +1,3 @@
-"""
-Configuration parameters for the prosumer community simulator
-"""
-
 # Simulation parameters
 NUM_PROSUMERS = 100
 TIME_STEPS = 24  # 24 hours
@@ -38,6 +34,3 @@ PENALTY_FOR_MARKET = 0.02  # €/kWh penalty for using local market
 
 # Output settings
 VERBOSE = True
-SAVE_RESULTS = True
-GENERATE_PLOTS = True
-RESULTS_DIR = "results"
