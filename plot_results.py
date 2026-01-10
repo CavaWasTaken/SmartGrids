@@ -47,9 +47,9 @@ class SimulationVisualizer:
         self.regulator_actions = pd.read_csv(
             os.path.join(self.results_dir, 'regulator_actions.csv'))
         
-        print(f"✓ Loaded {len(self.community_summary)} timesteps")
-        print(f"✓ Loaded {len(self.all_trades)} trades")
-        print(f"✓ Loaded data for {self.prosumer_energy['Prosumer_ID'].nunique()} prosumers")
+        print(f"Loaded {len(self.community_summary)} timesteps")
+        print(f"Loaded {len(self.all_trades)} trades")
+        print(f"Loaded data for {self.prosumer_energy['Prosumer_ID'].nunique()} prosumers")
     
     def plot_energy_balance(self):
         """Plot community energy generation and consumption"""
@@ -94,7 +94,7 @@ class SimulationVisualizer:
         
         plt.tight_layout()
         plt.savefig(os.path.join(self.plots_dir, 'energy_balance.png'), dpi=300, bbox_inches='tight')
-        print("✓ Generated: energy_balance.png")
+        print("Generated: energy_balance.png")
         plt.close()
     
     def plot_trading_activity(self):
@@ -142,7 +142,7 @@ class SimulationVisualizer:
         
         plt.tight_layout()
         plt.savefig(os.path.join(self.plots_dir, 'trading_activity.png'), dpi=300, bbox_inches='tight')
-        print("✓ Generated: trading_activity.png")
+        print("Generated: trading_activity.png")
         plt.close()
     
     def plot_price_dynamics(self):
@@ -207,7 +207,7 @@ class SimulationVisualizer:
         
         plt.tight_layout()
         plt.savefig(os.path.join(self.plots_dir, 'price_dynamics.png'), dpi=300, bbox_inches='tight')
-        print("✓ Generated: price_dynamics.png")
+        print("Generated: price_dynamics.png")
         plt.close()
     
     def plot_battery_usage(self):
@@ -253,7 +253,7 @@ class SimulationVisualizer:
         
         plt.tight_layout()
         plt.savefig(os.path.join(self.plots_dir, 'battery_usage.png'), dpi=300, bbox_inches='tight')
-        print("✓ Generated: battery_usage.png")
+        print("Generated: battery_usage.png")
         plt.close()
     
     def plot_prosumer_performance(self):
@@ -327,7 +327,7 @@ class SimulationVisualizer:
         
         plt.tight_layout()
         plt.savefig(os.path.join(self.plots_dir, 'prosumer_performance.png'), dpi=300, bbox_inches='tight')
-        print("✓ Generated: prosumer_performance.png")
+        print("Generated: prosumer_performance.png")
         plt.close()
     
     def plot_regulator_impact(self):
@@ -371,7 +371,7 @@ class SimulationVisualizer:
         
         plt.tight_layout()
         plt.savefig(os.path.join(self.plots_dir, 'regulator_impact.png'), dpi=300, bbox_inches='tight')
-        print("✓ Generated: regulator_impact.png")
+        print("Generated: regulator_impact.png")
         plt.close()
     
     def plot_trade_volume_analysis(self):
@@ -420,7 +420,7 @@ class SimulationVisualizer:
         
         plt.tight_layout()
         plt.savefig(os.path.join(self.plots_dir, 'trade_volume_analysis.png'), dpi=300, bbox_inches='tight')
-        print("✓ Generated: trade_volume_analysis.png")
+        print("Generated: trade_volume_analysis.png")
         plt.close()
     
     def plot_home_type_analysis(self):
@@ -601,7 +601,7 @@ class SimulationVisualizer:
         plt.colorbar(scatter, ax=ax7, label='Home Type Index')
         
         plt.savefig(os.path.join(self.plots_dir, 'home_type_analysis.png'), dpi=300, bbox_inches='tight')
-        print("✓ Generated: home_type_analysis.png")
+        print("Generated: home_type_analysis.png")
         plt.close()
     
     def generate_all_plots(self):
@@ -620,7 +620,7 @@ class SimulationVisualizer:
         self.plot_home_type_analysis()
         
         print("\n" + "="*70)
-        print(f"✓ ALL PLOTS SAVED TO: {self.plots_dir}")
+        print(f"ALL PLOTS SAVED TO: {self.plots_dir}")
         print("="*70 + "\n")
 
 

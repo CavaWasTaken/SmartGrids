@@ -195,7 +195,7 @@ class LocalMarketMechanism:
         for seller in sellers:
             if seller.desired_quantity > 0.01:
                 trade_quantity = seller.desired_quantity
-                market_sell_price = market_price - (self.transaction_fee * trade_quantity)  # price received by seller after fee
+                market_sell_price = market_price - self.transaction_fee  # price received by seller after fee
                 seller.accept_trade(trade_quantity, market_sell_price, 
                                    is_buyer_role=False, is_p2p=False)
                 
@@ -209,7 +209,7 @@ class LocalMarketMechanism:
         for buyer in buyers:
             if buyer.desired_quantity > 0.01:
                 trade_quantity = buyer.desired_quantity
-                market_buy_price = market_price + (self.transaction_fee * trade_quantity)  # price paid by buyer including fee
+                market_buy_price = market_price + self.transaction_fee  # price paid by buyer including fee
                 buyer.accept_trade(trade_quantity, market_buy_price, 
                                   is_buyer_role=True, is_p2p=False)
                 

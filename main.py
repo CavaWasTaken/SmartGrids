@@ -14,7 +14,7 @@ def main():
         simulator.run_simulation()
         
         print(f"\n{'='*70}")
-        print("✓ SIMULATION COMPLETED SUCCESSFULLY")
+        print("SIMULATION COMPLETED SUCCESSFULLY")
         print(f"{'='*70}\n")
         
         return 0

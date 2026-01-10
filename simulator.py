@@ -285,7 +285,7 @@ class CommunitySimulator:
         if self.blockchain.pending_transactions:
             mined_block = self.blockchain.mine_pending_transactions()
             if mined_block and config.VERBOSE:
-                print(f"\n⛏ Block #{mined_block.index} mined with {len(mined_block.transactions)} transactions")
+                print(f"\nBlock #{mined_block.index} mined with {len(mined_block.transactions)} transactions")
                 print(f"  Hash: {mined_block.hash[:20]}... (Nonce: {mined_block.nonce})")
 
         # 7. Update ban durations (decrement from previous timesteps)
@@ -338,7 +338,7 @@ class CommunitySimulator:
         while self.blockchain.pending_transactions:   # while there are still pending transactions in the blockchain
             mined_block = self.blockchain.mine_pending_transactions()   # attempt to mine a new block with pending transactions
             if mined_block and config.VERBOSE:  # if mining was successful and verbose output is enabled
-                print(f"\n⛏ Final block #{mined_block.index} mined")
+                print(f"\nFinal block #{mined_block.index} mined")
         
         # Generate final report
         self.generate_final_report()
@@ -354,14 +354,14 @@ class CommunitySimulator:
         print("="*70)
         
         # Blockchain summary
-        print("\n📦 BLOCKCHAIN SUMMARY")
+        print("\nBLOCKCHAIN SUMMARY")
         blockchain_summary = self.blockchain.get_chain_summary()    # get summary statistics of the blockchain
         print(f"Total Blocks: {blockchain_summary['total_blocks']}")
         print(f"Total Transactions: {blockchain_summary['total_transactions']}")
         print(f"Chain Valid: {blockchain_summary['is_valid']}")
         
         # Miner statistics
-        print("\n⛏ TOP MINERS")
+        print("\nTOP MINERS")
         miner_stats = self.blockchain.get_miner_stats()    # get statistics of all miners
         top_miners = sorted(miner_stats, key=lambda x: x['blocks_mined'], reverse=True)[:5] # get top 5 miners by blocks mined
         for miner in top_miners:    # iterate over each top miner
@@ -374,13 +374,13 @@ class CommunitySimulator:
         # Top and bottom prosumers
         sorted_prosumers = sorted(self.prosumers, key=lambda x: x.balance, reverse=True)    # sort prosumers by their balance in descending order
         
-        print("\n💰 TOP 5 PROSUMERS (by balance)")
+        print("\nTOP 5 PROSUMERS (by balance)")
         for i, p in enumerate(sorted_prosumers[:5]):    # iterate over top 5 prosumers by balance
             print(f"  {i+1}. Prosumer {p.id}: euro{p.balance:.2f} "
                   f"(P2P: {p.p2p_trades}, Market: {p.market_trades}, "
                   f"Renewable: {p.renewable_usage:.1f} kWh)")
         
-        print("\n📉 BOTTOM 5 PROSUMERS (by balance)")
+        print("\nBOTTOM 5 PROSUMERS (by balance)")
         for i, p in enumerate(sorted_prosumers[-5:]):   # iterate over bottom 5 prosumers by balance
             print(f"  {i+1}. Prosumer {p.id}: euro{p.balance:.2f} "
                   f"(P2P: {p.p2p_trades}, Market: {p.market_trades}, "

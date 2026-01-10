@@ -214,7 +214,7 @@ class Prosumer:
         # This makes them attractive to buyers who would otherwise go to local market
         noise = random.uniform(0.95, 1.00)   # lower noise range than PV sellers (0.98-1.05)
         
-        # Start from midpoint between grid_sell and price_forecast, not grid_sell_price
+        # midpoint between grid_sell and price_forecast, not grid_sell_price
         # This accounts for battery storage costs but remains competitive
         base_battery_price = (grid_sell_price + price_forecast) / 2  # ~0.135 for forecast=0.15
         
@@ -244,14 +244,14 @@ class Prosumer:
         
         Args:
             quantity: Energy trading quantity in kWh
-            price: Trading price in €
+            price: Trading price in €/kWh
             is_buyer_role: True if prosumer is buying, False if selling
             is_p2p: True if P2P trade, False if local market
         """
         if is_buyer_role:   # if the prosumer trading is in the buyer role
             # Buying energy
             self.imbalance += quantity  # increase imbalance by quantity bought
-            self.balance -= price    # decrease balance by cost of purchase
+            self.balance -= price * quantity    # decrease balance by cost of purchase
         else:   # if the prosumer trading is in the seller role
             # Selling energy
             if not self.selling_from_battery:
@@ -259,7 +259,7 @@ class Prosumer:
             else:
                 self.battery_level -= quantity  # decrease battery level by quantity sold
                 self.battery_discharged_kwh += quantity  # track energy discharged for sale
-            self.balance += price    # increase balance by revenue from sale
+            self.balance += price * quantity    # increase balance by revenue from sale
         
         self.desired_quantity = max(0, self.desired_quantity - quantity)    # update desired quantity (stored in absolute value) after trade by reducing it by traded quantity. Ensure no negative values.
         
