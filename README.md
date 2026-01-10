@@ -7,7 +7,6 @@ A blockchain-based simulator for a prosumer community with self-organized energy
 ```
 SmartGrids/
 ├── README.md
-├── requirements.txt
 ├── SETUP_INSTRUCTIONS.md
 ├── config.py              # Configuration parameters
 ├── prosumer.py            # Prosumer class with decision logic
@@ -34,8 +33,6 @@ SmartGrids/
 See `SETUP_INSTRUCTIONS.md` for detailed installation steps.
 
 ```bash
-# Install dependencies
-pip install -r requirements.txt
 
 # Run simulation
 python main.py
